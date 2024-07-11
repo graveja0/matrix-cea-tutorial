@@ -1,12 +1,5 @@
 ---
 title: Matrix Methods for Cost-Effectiveness Analysis and Health Technology Assessment -  A Tutorial
-author:
-  - John Graves
-  - Ashley Leech
-  - Jinyi Zhu
-  - Grace Ratcliff
-  - Hanxuan Yu
-  - Shawn Garbett
 keywords:
   - Cost-Effectiveness Analysis
   - Microsimulation
