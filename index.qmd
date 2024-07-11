@@ -115,10 +115,9 @@ params_ <- list(
 
     v_tr_names = c("H","S1","S2"),             # transient health states
     v_ab_names = c("DOC","DS"),                # absorbing health states
-    v_ab_names_ref = c("D"),                      # absorbing health states (traditional approach)
+
     n_states = 5,                              # total number of health states
-    n_states0 = 4,                             # total number of health states (traditional approach)
-    
+  
     horizon = 150,                             # Model time horizon (years)
     
     r_v_disc_h  = 0.03,                        # annual discount rate (health)
@@ -129,7 +128,6 @@ params_ <- list(
     age0 = 25,                                 # age at baseline
     
     v_s0T = c(1,0,0,0,0),                      # initial state occupancy  
-    v_s0T_ref = c(1,0,0,0),                    # initial state occupancy (traditional approach)
 
     r_HS1 = 0.15,                              # disease onset rate
     r_S1H = 0.5,                               # recovery rate
@@ -295,24 +293,43 @@ ft
 ```{r}
 # Replication of Alarid-Escudero et al. 
 
-fn_p_HD <- function(age) {
+fn_p_HDOC <- function(age) {
   r_HD <- get("r_HD", envir = parent.frame())
   Delta_t <- get("Delta_t", envir = parent.frame())
   1 - exp(-r_HD * Delta_t)
 }
 
-fn_p_S1D <- function(age) {
+fn_p_HDS <- function(age) {
+  Delta_t <- get("Delta_t", envir = parent.frame())
+  1 - exp(- 0 * Delta_t)
+}
+
+fn_p_S1DS <- function(age) {
   r_HD <- get("r_HD", envir = parent.frame())
   hr_S1 <- get("hr_S1", envir = parent.frame())
   Delta_t <- get("Delta_t", envir = parent.frame())
-  1 - exp(-(hr_S1 * r_HD) * Delta_t)
+  1 - exp(-(hr_S1 * r_HD - r_HD) * Delta_t)
 }
 
-fn_p_S2D <- function(age) {
+fn_p_S1DOC <- function(age) {
+  r_HD <- get("r_HD", envir = parent.frame())
+  hr_S1 <- get("hr_S1", envir = parent.frame())
+  Delta_t <- get("Delta_t", envir = parent.frame())
+  1 - exp(-(r_HD) * Delta_t)
+}
+
+fn_p_S2DS <- function(age) {
   r_HD <- get("r_HD", envir = parent.frame())
   hr_S2 <- get("hr_S2", envir = parent.frame())
   Delta_t <- get("Delta_t", envir = parent.frame())
-  1 - exp(-(hr_S2 * r_HD) * Delta_t)
+  1 - exp(-(hr_S2 * r_HD - r_HD) * Delta_t)
+}
+
+fn_p_S2DOC <- function(age) {
+  r_HD <- get("r_HD", envir = parent.frame())
+  hr_S2 <- get("hr_S2", envir = parent.frame())
+  Delta_t <- get("Delta_t", envir = parent.frame())
+  1 - exp(-(r_HD) * Delta_t)
 }
 
 fn_p_HS1 <- function(age) {
@@ -359,6 +376,9 @@ params_ref <-
 
 params_ref$ages_trace <- params_ref$ages
 params_ref$ages <- params_ref$ages[-length(params_ref$ages)] 
+# 
+# attach(params_ref)
+# .x = 40
 
 params_ref <- with(params_ref,modifyList(params_ref,list(
 
@@ -367,68 +387,139 @@ params_ref <- with(params_ref,modifyList(params_ref,list(
     ages %>% map(~({
 
      mP_SoC = 
-          matrix(c(
-          (1 - fn_p_HD(.x)) * (1 - fn_p_HS1(.x)) , (1 - fn_p_HD(.x)) * fn_p_HS1(.x)  , 0 , fn_p_HD(.x), 
-          (1 - fn_p_S1D(.x)) * fn_p_S1H(.x) , (1 - fn_p_S1D(.x)) * (1 - (fn_p_S1H(.x) + fn_p_S1S2(.x))) , (1 - fn_p_S1D(.x)) * fn_p_S1S2(.x) , fn_p_S1D(.x) , 
-          0 , 0 , 1 - fn_p_S2D(.x) , fn_p_S2D(.x) , 
-          0,0,0,1),
-          nrow = n_states0, 
-          ncol = n_states0,
-          byrow=TRUE, 
-          dimnames = list(c(v_tr_names,v_ab_names_ref),
-                          c(v_tr_names,v_ab_names_ref)
-          ))
+          matrix(c(0,  # healthy -> healthy  (will be calculated later)
+           fn_p_HS1(.x) * (1 - fn_p_HDOC(.x)) * (1 - fn_p_HDS(.x)),  # healthy -> s1 
+           0, # healthy -> S2
+           fn_p_HDOC(.x) * (1 - fn_p_HDS(.x)),  # healthy -> DOC
+           fn_p_HDS(.x) * (1 - fn_p_HDS(.x)), # healthy -> DS
+           
+           fn_p_S1H(.x) * (1 - fn_p_S1DOC(.x)) * (1 - fn_p_S1DS(.x)),  # S1 -> healthy
+           0, # S1 -> S1 (will be calculated later)
+           fn_p_S1S2(.x) *  (1 - fn_p_S1DOC(.x)) * (1 - fn_p_S1DS(.x)),  # S1 -> S2
+           fn_p_S1DOC(.x) , 
+           fn_p_S1DS(.x) * (1 - fn_p_S1DOC(.x)), 
+           
+           0,  # S2 -> healthy
+           0, # S2 -> S1
+           0,  # S2 -> S2 (will be calculated later)
+           fn_p_S2DOC(.x) , 
+           fn_p_S2DS(.x) * (1 - fn_p_S2DOC(.x)), 
+           
+           0, 0, 0, 0, 0,
+           0, 0, 0, 0, 0
+           ),
+            nrow = n_states, 
+            ncol = n_states,
+            byrow=TRUE, 
+            dimnames = list(c(v_tr_names,v_ab_names),
+                            c(v_tr_names,v_ab_names)
+            ))
                           
       mP_A = 
-          matrix(c(
-          (1 - fn_p_HD(.x)) * (1 - fn_p_HS1(.x)) , (1 - fn_p_HD(.x)) * fn_p_HS1(.x)  , 0 , fn_p_HD(.x), 
-          (1 - fn_p_S1D(.x)) * fn_p_S1H(.x) , (1 - fn_p_S1D(.x)) * (1 - (fn_p_S1H(.x) + fn_p_S1S2(.x))) , (1 - fn_p_S1D(.x)) * fn_p_S1S2(.x) , fn_p_S1D(.x) , 
-          0 , 0 , 1 - fn_p_S2D(.x) , fn_p_S2D(.x) , 
-          0,0,0,1),
-          nrow = n_states0, 
-          ncol = n_states0,
-          byrow=TRUE, 
-          dimnames = list(c(v_tr_names,v_ab_names_ref),
-                          c(v_tr_names,v_ab_names_ref)
-          ))    
+        matrix(c(0,  # healthy -> healthy  (will be calculated later)
+           fn_p_HS1(.x) * (1 - fn_p_HDOC(.x)) * (1 - fn_p_HDS(.x)),  # healthy -> s1 
+           0, # healthy -> S2
+           fn_p_HDOC(.x) * (1 - fn_p_HDS(.x)),  # healthy -> DOC
+           fn_p_HDS(.x) * (1 - fn_p_HDS(.x)), # healthy -> DS
+           
+           fn_p_S1H(.x) * (1 - fn_p_S1DOC(.x)) * (1 - fn_p_S1DS(.x)),  # S1 -> healthy
+           0, # S1 -> S1 (will be calculated later)
+           fn_p_S1S2(.x) *  (1 - fn_p_S1DOC(.x)) * (1 - fn_p_S1DS(.x)),  # S1 -> S2
+           fn_p_S1DOC(.x) , 
+           fn_p_S1DS(.x) * (1 - fn_p_S1DOC(.x)), 
+           
+           0,  # S2 -> healthy
+           0, # S2 -> S1
+           0,  # S2 -> S2 (will be calculated later)
+           fn_p_S2DOC(.x) , 
+           fn_p_S2DS(.x) * (1 - fn_p_S2DOC(.x)), 
+           
+           0, 0, 0, 0, 0,
+           0, 0, 0, 0, 0
+           ),
+            nrow = n_states, 
+            ncol = n_states,
+            byrow=TRUE, 
+            dimnames = list(c(v_tr_names,v_ab_names),
+                            c(v_tr_names,v_ab_names)
+            ))
+        
      
       mP_B = 
-          matrix(c(
-          (1 - fn_p_HD(.x)) * (1 - fn_p_HS1(.x)) , (1 - fn_p_HD(.x)) * fn_p_HS1(.x)  , 0 , fn_p_HD(.x), 
-          (1 - fn_p_S1D(.x)) * fn_p_S1H(.x) , (1 - fn_p_S1D(.x)) * (1 - (fn_p_S1H(.x) + fn_p_S1S2_trtB(.x))) , (1 - fn_p_S1D(.x)) * fn_p_S1S2_trtB(.x) , fn_p_S1D(.x) , 
-          0 , 0 , 1 - fn_p_S2D(.x) , fn_p_S2D(.x) , 
-          0,0,0,1),
-          nrow = n_states0, 
-          ncol = n_states0,
-          byrow=TRUE, 
-          dimnames = list(c(v_tr_names,v_ab_names_ref),
-                          c(v_tr_names,v_ab_names_ref)
-          ))    
+        matrix(c(0,  # healthy -> healthy  (will be calculated later)
+           fn_p_HS1(.x) * (1 - fn_p_HDOC(.x)) * (1 - fn_p_HDS(.x)),  # healthy -> s1 
+           0, # healthy -> S2
+           fn_p_HDOC(.x) * (1 - fn_p_HDS(.x)),  # healthy -> DOC
+           fn_p_HDS(.x) * (1 - fn_p_HDS(.x)), # healthy -> DS
+           
+           fn_p_S1H(.x) * (1 - fn_p_S1DOC(.x)) * (1 - fn_p_S1DS(.x)),  # S1 -> healthy
+           0, # S1 -> S1 (will be calculated later)
+           fn_p_S1S2_trtB(.x) *  (1 - fn_p_S1DOC(.x)) * (1 - fn_p_S1DS(.x)),  # S1 -> S2
+           fn_p_S1DOC(.x) , 
+           fn_p_S1DS(.x) * (1 - fn_p_S1DOC(.x)), 
+           
+           0,  # S2 -> healthy
+           0, # S2 -> S1
+           0,  # S2 -> S2 (will be calculated later)
+           fn_p_S2DOC(.x) , 
+           fn_p_S2DS(.x) * (1 - fn_p_S2DOC(.x)), 
+           
+           0, 0, 0, 0, 0,
+           0, 0, 0, 0, 0
+           ),
+            nrow = n_states, 
+            ncol = n_states,
+            byrow=TRUE, 
+            dimnames = list(c(v_tr_names,v_ab_names),
+                            c(v_tr_names,v_ab_names)
+            ))
+          
           
       mP_AB = 
-          matrix(c(
-          (1 - fn_p_HD(.x)) * (1 - fn_p_HS1(.x)) , (1 - fn_p_HD(.x)) * fn_p_HS1(.x)  , 0 , fn_p_HD(.x), 
-          (1 - fn_p_S1D(.x)) * fn_p_S1H(.x) , (1 - fn_p_S1D(.x)) * (1 - (fn_p_S1H(.x) + fn_p_S1S2_trtB(.x))) , (1 - fn_p_S1D(.x)) * fn_p_S1S2_trtB(.x) , fn_p_S1D(.x) , 
-          0 , 0 , 1 - fn_p_S2D(.x) , fn_p_S2D(.x) , 
-          0,0,0,1),
-          nrow = n_states0, 
-          ncol = n_states0,
-          byrow=TRUE, 
-          dimnames = list(c(v_tr_names,v_ab_names_ref),
-                          c(v_tr_names,v_ab_names_ref)
-          ))    
+          matrix(c(0,  # healthy -> healthy  (will be calculated later)
+           fn_p_HS1(.x) * (1 - fn_p_HDOC(.x)) * (1 - fn_p_HDS(.x)),  # healthy -> s1 
+           0, # healthy -> S2
+           fn_p_HDOC(.x) * (1 - fn_p_HDS(.x)),  # healthy -> DOC
+           fn_p_HDS(.x) * (1 - fn_p_HDS(.x)), # healthy -> DS
            
+           fn_p_S1H(.x) * (1 - fn_p_S1DOC(.x)) * (1 - fn_p_S1DS(.x)),  # S1 -> healthy
+           0, # S1 -> S1 (will be calculated later)
+           fn_p_S1S2_trtB(.x) *  (1 - fn_p_S1DOC(.x)) * (1 - fn_p_S1DS(.x)),  # S1 -> S2
+           fn_p_S1DOC(.x) , 
+           fn_p_S1DS(.x) * (1 - fn_p_S1DOC(.x)), 
+           
+           0,  # S2 -> healthy
+           0, # S2 -> S1
+           0,  # S2 -> S2 (will be calculated later)
+           fn_p_S2DOC(.x) , 
+           fn_p_S2DS(.x) * (1 - fn_p_S2DOC(.x)), 
+           
+           0, 0, 0, 0, 0,
+           0, 0, 0, 0, 0
+           ),
+            nrow = n_states, 
+            ncol = n_states,
+            byrow=TRUE, 
+            dimnames = list(c(v_tr_names,v_ab_names),
+                            c(v_tr_names,v_ab_names)
+            ))
+      
+      # Balance matrix via diagonals to ensure probabilities sum to 1 across rows
+      diag(mP_SoC) = 1 - rowSums(mP_SoC)
+      diag(mP_A) = 1 - rowSums(mP_A)
+      diag(mP_B) = 1 - rowSums(mP_B)
+      diag(mP_AB) = 1 - rowSums(mP_AB)
+      
       array(c(as.vector(mP_SoC),
               as.vector(mP_A), 
               as.vector(mP_B),
               as.vector(mP_AB)), 
-            dim = c(length(v_tr_names)+ length(v_ab_names_ref),length(v_tr_names)+ length(v_ab_names_ref),length(v_tx_names)),
-            dimnames = list(c(v_tr_names,v_ab_names_ref),c(v_tr_names,v_ab_names_ref),v_tx_names)) %>% 
+            dim = c(length(v_tr_names)+ length(v_ab_names),length(v_tr_names)+ length(v_ab_names),length(v_tx_names)),
+            dimnames = list(c(v_tr_names,v_ab_names),c(v_tr_names,v_ab_names),v_tx_names)) %>% 
         apply(.,3,function(x) x, simplify=FALSE) 
       
     }))
   )))
-
 
 params_ref$m_P <- transpose(params_ref$m_P); length(params_ref$m_P)
 
@@ -447,7 +538,7 @@ trace_ref <-
     with(params_ref, {
         m_P %>% map( ~ ({
             P = .x
-            occ <- v_s0T_ref
+            occ <- v_s0T
             P %>% map(~({
               occ <<- occ %*% .x
             })) %>% 
@@ -460,9 +551,10 @@ trace_ref <-
 ly_ = with(params_ref,(matrix(c(1,
                              1 ,
                              1,
+                             0, 
                              0) * Delta_t,
                            dimnames = list(c(
-                             c(v_tr_names,v_ab_names_ref)
+                             c(v_tr_names,v_ab_names)
                            ), c("UW")))
 ))
 ly_ <- 
@@ -477,7 +569,7 @@ LYt <-
   with(params_ref, {
     v_tx_names %>% map( ~ ({
       P = m_P[[.x]]
-      occ <- v_s0T_ref 
+      occ <- v_s0T 
       d <- ly_[[.x]]
       out <- 0
       P %>% map(~({
@@ -496,9 +588,10 @@ LY = LYt %>% map(~sum(.x * gen_wcc(params_ref$omega, method = "Simpson1/3")))
 qaly_ = with(params_ref,(matrix(c(u_H,
                                u_S1 ,
                                u_S2,
+                               u_D,
                                u_D) * Delta_t,
                              dimnames = list(c(
-                               c(v_tr_names,v_ab_names_ref)
+                               c(v_tr_names,v_ab_names)
                              ), c("UW")))
 ))
 qaly_ <- 
@@ -517,7 +610,7 @@ QALYt <-
   with(params_ref, {
     v_tx_names %>% map( ~ ({
       P = m_P[[.x]]
-      occ <- v_s0T_ref
+      occ <- v_s0T
       d <- qaly_[[.x]]
       out <- 0
       P %>% map(~({
@@ -536,9 +629,10 @@ QALY = QALYt %>% map(~sum(.x * v_discD_h * gen_wcc(params_ref$omega, method = "S
 cost_ = with(params_ref,(matrix(c(c_H,
                                c_S1 ,
                                c_S2,
+                               c_D,
                                c_D)*Delta_t,
                              dimnames = list(c(
-                               c(v_tr_names,v_ab_names_ref)
+                               c(v_tr_names,v_ab_names)
                              ), c("COST")))
 ))
 cost_ <-
@@ -568,7 +662,7 @@ COSTt <-
   with(params_ref, {
     v_tx_names %>% map( ~ ({
       P = m_P[[.x]]
-      occ <- v_s0T_ref
+      occ <- v_s0T
       d <- cost_[[.x]]
       out <- 0
       P %>% map(~({
